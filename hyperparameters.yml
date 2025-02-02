@@ -1,0 +1,142 @@
+# the "test_inner_iterations" is the number of iterations for a whole year
+
+reptile:
+  env_ids: 
+    - Eplus-5zone-hot-continuous-stochastic-v1
+    - Eplus-5zone-cool-continuous-stochastic-v1
+  test_ids:
+    - Eplus-5zone-mixed-continuous-v1
+  variables:
+    outdoor_temperature:
+      - Site Outdoor Air Drybulb Temperature
+      - Environment
+    direct_solar_radiation:
+      - Site Direct Solar Radiation Rate per Area
+      - Environment
+    htg_setpoint:
+      - Zone Thermostat Heating Setpoint Temperature
+      - SPACE5-1
+    clg_setpoint:
+      - Zone Thermostat Cooling Setpoint Temperature
+      - SPACE5-1
+    air_temperature:
+      - Zone Air Temperature
+      - SPACE5-1
+    people_occupant:
+      - Zone People Occupant Count
+      - SPACE5-1
+    HVAC_electricity_demand_rate:
+      - Facility Total HVAC Electricity Demand Rate
+      - Whole Building
+  replay_buffer_size: 100000
+  minibatch_size: 64
+  session_length: 96
+  epsilon_initial: 1
+  epsilon_decay: 0.99
+  epsilon_min: 0.01
+  network_sync_rate: 150
+  learning_rate_a: 0.001
+  lr_outer: 0.0005
+  inner_iterations: 1
+  outer_iterations: 1000
+  discount_factor_g: 0.99
+  hidden_dim: 128
+  enable_double_dqn: False
+  enable_dueling_dqn: False
+  test_inner_iterations: 5
+  meta_algorithm: reptile
+  equal_input_output: True
+  
+  
+
+maml:
+  env_ids: 
+    - Eplus-office-mixed-continuous-stochastic-v1
+    - Eplus-shop-mixed-continuous-stochastic-v1
+  test_ids:
+    -     - Eplus-datacenter-mixed-continuous-v1
+  replay_buffer_size: 100000
+  minibatch_size: 64
+  epsilon_initial: 1
+  epsilon_decay: 0.995
+  epsilon_min: 0.01
+  network_sync_rate: 200
+  learning_rate_a: 0.001
+  lr_outer: 0.0005
+  inner_iterations: 20
+  outer_iterations: 500
+  discount_factor_g: 0.99
+  hidden_dim: 256
+  enable_double_dqn: False
+  enable_dueling_dqn: False
+  test_inner_iterations: 365
+  meta_algorithm: maml
+
+  
+DQN:
+  env_ids: 
+    - Eplus-office-mixed-continuous-stochastic-v1
+    - Eplus-shop-mixed-continuous-stochastic-v1
+  test_ids:
+    - Eplus-smalldatacenter-mixed-continuous-v1
+    - Eplus-datacenter-mixed-continuous-v1
+  replay_buffer_size: 100000
+  minibatch_size: 64
+  epsilon_initial: 1
+  epsilon_decay: 0.995
+  epsilon_min: 0.01
+  network_sync_rate: 100
+  learning_rate_a: 0.001
+  lr_outer: 0.0005
+  inner_iterations: 100
+  outer_iterations: 500
+  discount_factor_g: 0.99
+  hidden_dim: 256
+  enable_double_dqn: False
+  enable_dueling_dqn: False
+  test_inner_iterations: 365
+  meta_algorithm: reptile
+  
+reptile2:
+  env_ids: 
+    - CartPole-v1
+    - CartPole
+  replay_buffer_size: 100000
+  minibatch_size: 64
+  epsilon_initial: 1
+  epsilon_decay: 0.995
+  epsilon_min: 0.01
+  network_sync_rate: 30
+  learning_rate_a: 0.001
+  lr_outer: 0.0005
+  inner_iterations: 200
+  outer_iterations: 1000
+  discount_factor_g: 0.99
+  hidden_dim: 128
+  enable_double_dqn: False
+  enable_dueling_dqn: False
+  
+
+
+
+  default:
+  env_ids: 
+    - CartPole-v1
+    - LunarLander-v3
+  replay_buffer_size: 100000
+  minibatch_size: 64
+  epsilon_initial: 1
+  epsilon_decay: 0.9995
+  epsilon_min: 0.01
+  network_sync_rate: 25
+  learning_rate_a: 0.001
+  lr_outer: 0.001
+  inner_iterations: 300
+  outer_iterations: 1000
+  discount_factor_g: 0.99
+  hidden_dim: 128
+  enable_double_dqn: False
+  enable_dueling_dqn: False
+  test_inner_iterations: 500
+  meta_algorithm: maml
+
