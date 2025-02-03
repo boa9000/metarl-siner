@@ -19,6 +19,7 @@ from torch.autograd import grad
 from experience_replay import ReplayMemory
 from models import *
 import DQN
+import PPO
 from organize_tools import delete_env_dir
 from visualization_tools import GraphSaver
 
@@ -66,6 +67,8 @@ class Agent():
 
             #self.meta_model = MetaModel(self.hidden_dim).to(device)
             self.meta_model = None
+            self.meta_actor = None
+            self.meta_critic = None
             self.loss_fn = nn.MSELoss()
             #self.optimizer = torch.optim.Adam(self.meta_model.parameters(), lr=self.lr_outer)
 
@@ -76,11 +79,12 @@ class Agent():
             self.META_PLOT_FILE = os.path.join(RUNS_DIR, f"{self.hyperparameter_set}_meta.png")
             self.device = device
 
-    def run_inner(self, env, inner_algo = self.inner_algo, is_training=True, is_meta_training=True):
-
-        if inner_algo == 'DQN':
+    def run_inner(self, env, is_training=True, is_meta_training=True):
+        self.inner_algo = 'PPO'
+        if self.inner_algo == 'DQN':
             algo = DQN.DQNAgent(self, env, is_meta_training)
-        if inner_algo == 'PPO':
+        if self.inner_algo == 'PPO':
+            algo = PPO.PPOAgent(self, env, is_meta_training)
             pass
         
         rewards_per_session = []
@@ -125,45 +129,23 @@ class Agent():
         model = algo.model
         return model, rewards_per_session
 
-    def get_env(self, env, is_meta_training= True):
-        if is_meta_training == True:
-            day = np.random.randint(1,28-7)
-            month = np.random.randint(1,13)
-            year = 1999
-            period = (day, month, year, day+7, month, year)
-            timestepph = 1
-            extra_params={'runperiod': period}
-            env = gym.make(env, config_params = extra_params, variables = self.variables)
-            #env = gym.make(env, variables = self.variables)
-            env = DiscreteIncrementalWrapper(
-                env, initial_values=[15.0, 30.0], delta_temp=1, step_temp=1)
-            env = NormalizeObservation(
-                env=env)
-        else:
-            np.random.seed(seed=seed)
-            random.seed(seed)
-            day = np.random.randint(1,(28-7))
-            month = np.random.randint(1,13)
-            year = 1999
-            period = (day, month, year, day+7, month, year)
-            timestepph = 1
-            extra_params={'runperiod': period}
-            env = gym.make(env, config_params = extra_params, variables = self.variables)
-            #env = gym.make(env, variables = self.variables)
-            env = DiscreteIncrementalWrapper(
-                env, initial_values=[15.0, 30.0], delta_temp=1, step_temp=1)
-            env = NormalizeObservation(
-                env=env)
-            
-        return env
 
     def update_outer_reptile(self, meta_model, inner_model):
-        if self.equal_input_output:
-            for meta_param, inner_param in zip(meta_model.shared.parameters(), inner_model.shared.parameters()):
-                meta_param.data.add_(inner_param.data - meta_param.data, alpha=self.lr_outer)
-        else:
-            for meta_param, inner_param in zip(meta_model.parameters(), inner_model.meta_model.parameters()):
-                meta_param.data.add_(inner_param.data - meta_param.data, alpha=self.lr_outer)
+        if self.inner_algo == 'DQN':
+            if self.equal_input_output:
+                for meta_param, inner_param in zip(meta_model.shared.parameters(), inner_model.shared.parameters()):
+                    meta_param.data.add_(inner_param.data - meta_param.data, alpha=self.lr_outer)
+            else:
+                for meta_param, inner_param in zip(meta_model.parameters(), inner_model.meta_model.parameters()):
+                    meta_param.data.add_(inner_param.data - meta_param.data, alpha=self.lr_outer)
+        if self.inner_algo == 'PPO':
+            if self.equal_input_output:
+                for meta_param, inner_param in zip(meta_model.actor.parameters(), inner_model.actor.parameters()):
+                    meta_param.data.add_(inner_param.data - meta_param.data, alpha=self.lr_outer)
+                for meta_param, inner_param in zip(meta_model.critic.parameters(), inner_model.critic.parameters()):
+                    meta_param.data.add_(inner_param.data - meta_param.data, alpha=self.lr_outer)
+            else:
+                pass
 
     def update_outer_maml(self, meta_model, models):
         meta_model.train()
@@ -248,15 +230,23 @@ class Agent():
         else:
             rewards_dict_meta = {env: None for env in self.test_ids}
             rewards_dict_metaless = {env: None for env in self.test_ids}
-            self.meta_model = Shared(self.hidden_dim, 11, 5).to(device)
-            self.meta_model.load_state_dict(torch.load(self.MODEL_FILE_LATEST, weights_only=True))
+            if self.inner_algo == 'DQN':
+                self.meta_model = DQN.DQNnetwork(self.hidden_dim, 11, 5).to(device)
+                self.meta_model.load_state_dict(torch.load(self.MODEL_FILE_LATEST, weights_only=True))
+            if self.inner_algo == 'PPO':
+                self.meta_actor = PPO.Actor(self.hidden_dim, 11, 5).to(device)
+                self.meta_critic = PPO.Critic(self.hidden_dim, 11).to(device)
             print(f"with loaded model and {self.test_inner_iterations} episodes")
             for env in self.test_ids:
                 model, r_per_ep_meta = self.run_inner(env, is_training=True, is_meta_training=False)
                 print(f"Env: {env}, Mean Reward: {np.mean(r_per_ep_meta)}, Max Reward: {np.max(r_per_ep_meta)}")
                 rewards_dict_meta[env] = r_per_ep_meta
             del self.meta_model
+            del self.meta_actor
+            del self.meta_critic
             self.meta_model = None
+            self.meta_actor = None
+            self.meta_critic = None
             print(f"without loaded model and {self.test_inner_iterations} episodes")
             for env in self.test_ids:
                 model, r_per_ep_metaless = self.run_inner(env, is_training=True, is_meta_training=False)
