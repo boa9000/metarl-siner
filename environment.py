@@ -4,7 +4,7 @@ from sinergym.utils.wrappers import *
 import numpy as np
 
 
-def get_env(env, is_meta_training= True, seed=111):
+def get_env(env, variables, is_meta_training= True, seed=111,):
     if is_meta_training == True:
         day = np.random.randint(1,28-6)
         month = np.random.randint(1,13)
@@ -12,7 +12,7 @@ def get_env(env, is_meta_training= True, seed=111):
         period = (day, month, year, day+6, month, year)
         timestepph = 1
         extra_params={'runperiod': period}
-        env = gym.make(env, config_params = extra_params, variables = self.variables)
+        env = gym.make(env, config_params = extra_params, variables = variables)
         #env = gym.make(env, variables = self.variables)
         env = DiscreteIncrementalWrapper(
             env, initial_values=[15.0, 30.0], delta_temp=1, step_temp=1)
@@ -27,7 +27,7 @@ def get_env(env, is_meta_training= True, seed=111):
         period = (day, month, year, day+6, month, year)
         timestepph = 1
         extra_params={'runperiod': period}
-        env = gym.make(env, config_params = extra_params, variables = self.variables)
+        env = gym.make(env, config_params = extra_params, variables = variables)
         #env = gym.make(env, variables = self.variables)
         env = DiscreteIncrementalWrapper(
             env, initial_values=[15.0, 30.0], delta_temp=1, step_temp=1)

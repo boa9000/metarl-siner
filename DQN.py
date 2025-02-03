@@ -41,7 +41,6 @@ class DQNAgent:
     def __init__(self, agent, env, is_meta_training= True):
 
         self.epsilon_initial = agent.epsilon_initial
-        self.epsilon_final = agent.epsilon_final
         self.epsilon_decay = agent.epsilon_decay
         self.epsilon_min = agent.epsilon_min
         self.lr_inner = agent.learning_rate_a
@@ -54,14 +53,16 @@ class DQNAgent:
         self.MODEL_FILE = agent.MODEL_FILE
         self.device = agent.device 
         self.is_meta_training = is_meta_training
-        self.mini_batch_size = agent.mini_batch_size
+        self.minibatch_size = agent.minibatch_size
         self.session_length = agent.session_length
         self.loss_fn = nn.MSELoss()
+        self.variables = agent.variables
+        self.discount_factor_g = agent.discount_factor_g
 
 
-        self.env = env_start(env, is_meta_training= self.is_meta_training)
-        num_actions = env.action_space.n
-        num_states = env.observation_space.shape[0]
+        self.env = get_env(env, variables= self.variables,is_meta_training=self.is_meta_training)
+        num_actions = self.env.action_space.n
+        num_states = self.env.observation_space.shape[0]
         if self.equal_input_output:
             if self.meta_model is None:
                 self.meta_model = DQNnetwork(self.hidden_dim, num_states, num_actions).to(self.device)
@@ -84,6 +85,8 @@ class DQNAgent:
         self.rewards_per_session = []
 
 
+
+
     def get_action(self, env, state):
         if random.random() < self.epsilon:
             action = env.action_space.sample()
@@ -96,16 +99,15 @@ class DQNAgent:
     def update_epsilon(self):
         self.epsilon = max(self.epsilon * self.epsilon_decay, self.epsilon_min)
 
-    def train(self):
-        if (len(self.memory) > self.minibatch_size) and (self.step_count % 2 == 0):
+    def train(self, num_steps, stuff):
+        self.memory.append(stuff)
+        if (len(self.memory) > self.minibatch_size) and (num_steps % 2 == 0):
             minibatch = self.memory.sample(self.minibatch_size)
             self.optimize(minibatch, self.model, self.target_model)
 
             self.update_epsilon()
 
-        if self.step_count % self.session_length == 0:
-            self.rewards_per_session.append(session_reward)
-            session_reward = 0.0
+
 
 
     def optimize(self, minibatch, model, target_model):

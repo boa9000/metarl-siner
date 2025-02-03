@@ -46,6 +46,7 @@ reptile:
   test_inner_iterations: 5
   meta_algorithm: reptile
   equal_input_output: True
+  inner_algo: 'DQN'
   
   
 

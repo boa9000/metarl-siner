@@ -18,6 +18,9 @@ from torch.autograd import grad
 
 from experience_replay import ReplayMemory
 from models import *
+import DQN
+from organize_tools import delete_env_dir
+from visualization_tools import GraphSaver
 
 DATE_FORMAT = "%m-%d %H:%M:%S"
 RUNS_DIR = "runs"
@@ -58,6 +61,7 @@ class Agent():
             self.test_inner_iterations = hyperparameters["test_inner_iterations"]
             self.meta_algorithm = hyperparameters["meta_algorithm"]
             self.equal_input_output = hyperparameters["equal_input_output"]
+            self.inner_algo = hyperparameters["inner_algo"]
 
 
             #self.meta_model = MetaModel(self.hidden_dim).to(device)
@@ -72,100 +76,53 @@ class Agent():
             self.META_PLOT_FILE = os.path.join(RUNS_DIR, f"{self.hyperparameter_set}_meta.png")
             self.device = device
 
-    def run_inner(self, env, is_training=True, is_meta_training=True):
-        env = self.get_env(env=env, is_meta_training=is_meta_training)
-        num_actions = env.action_space.n
-        num_states = env.observation_space.shape[0]
-        if self.equal_input_output:
-            if self.meta_model is None:
-                self.meta_model = Shared(self.hidden_dim, num_states, num_actions).to(device)
+    def run_inner(self, env, inner_algo = self.inner_algo, is_training=True, is_meta_training=True):
 
-            model = Shared(self.hidden_dim, num_states, num_actions).to(device)
-            model.load_state_dict(self.meta_model.state_dict())
-        else:
-            model = TaskModel(self.meta_model, num_states, num_actions).to(device)
-        #model = DQN(num_states, num_actions, self.hidden_dim).to(device)
-
+        if inner_algo == 'DQN':
+            algo = DQN.DQNAgent(self, env, is_meta_training)
+        if inner_algo == 'PPO':
+            pass
+        
         rewards_per_session = []
-        epsilon_history = []
-
-        if is_training:
-            model.train()
-            epsilon = self.epsilon_initial
-            memory = ReplayMemory(self.replay_buffer_size)
-            if self.equal_input_output:
-                target_model = Shared(self.hidden_dim, num_states, num_actions).to(device)
-            else:
-                target_model = TaskModel(self.meta_model, num_states, num_actions).to(device)
-            #target_model = DQN(num_states, num_actions, self.hidden_dim).to(device)
-            target_model.load_state_dict(model.state_dict())
-            self.optimizer = torch.optim.Adam(model.parameters(), lr=self.learning_rate_a)
-            epsilon_history = []
-            step_count = 0
-            best_reward = -1e9
-        else:
-            model.load_state_dict(torch.load(self.MODEL_FILE))
-            model.eval()
-
+        step_count = 0
         num_of_iterations = self.inner_iterations if is_meta_training else self.test_inner_iterations
 
         
         for episode in range(num_of_iterations):
-            state, _ = env.reset()
+            state, _ = algo.env.reset()
             state = torch.tensor(state, dtype=torch.float, device=device)
             done = False
             session_reward = 0.0
 
             while (not done):
-                if is_training and random.random() < epsilon:
-                    action = env.action_space.sample()
-                    action = torch.tensor(action, dtype=torch.int64, device=device)
-                else:
-                    with torch.no_grad():
-                        action = model(state.unsqueeze(dim=0)).squeeze().argmax()
-                        
-
-                new_state, reward, terminated, turnicated, info = env.step(action.item())
+                action = algo.get_action(algo.env, state)
+                
+                new_state, reward, terminated, turnicated, info = algo.env.step(action.item())
                 #print(f"action: {action.item()}, state: {state}, info: {info} reward: {reward}")
                 session_reward += reward
 
                 new_state = torch.tensor(new_state, dtype=torch.float32).to(device)
                 reward = torch.tensor(reward, dtype=torch.float32).to(device)
 
-
-                memory.append((state, action, reward, new_state, terminated))
-                    
-
+                stuff = (state, action, reward, new_state, terminated)
                 state = new_state
-                
                 done = turnicated or terminated
-
                 step_count += 1
 
-                if (len(memory) > self.minibatch_size) and (step_count % 2 == 0):
-                    minibatch = memory.sample(self.minibatch_size)
-                    self.optimize(minibatch, model, target_model)
-                    
-                    #epsilon = max(self.epsilon_min, self.epsilon_min + (self.epsilon_initial - self.epsilon_min) * (episode / (num_of_iterations * 0.7)))
-                    epsilon = max(epsilon * self.epsilon_decay, self.epsilon_min)
-                    epsilon_history.append(epsilon)
-                    #print("updated!")
+                algo.train(step_count,stuff)
 
-                    if step_count % self.network_sync_rate == 0:
-                        target_model.load_state_dict(model.state_dict())
-                        #print("Target Netowrk Updated")
-                
                 if step_count % self.session_length == 0:
                     rewards_per_session.append(session_reward)
                     session_reward = 0.0
 
-
+                
         #rewards_per_episode = np.array([reward.cpu().numpy() for reward in rewards_per_episode])
-        dir = env.get_wrapper_attr('workspace_path')
-        env.close()
+        dir = algo.env.get_wrapper_attr('workspace_path')
+        algo.env.close()
         print(max(rewards_per_session))
         print(rewards_per_session)
-        self.delete_env_dir(dir)
+        delete_env_dir(dir)
+        model = algo.model
         return model, rewards_per_session
 
     def get_env(self, env, is_meta_training= True):
@@ -262,6 +219,7 @@ class Agent():
         models = {env: None for env in self.env_ids}
         rewards = {env: None for env in self.env_ids}
         max_rs = {env: None for env in self.env_ids}
+        gs = GraphSaver(self.PLOT_FILE, self.META_PLOT_FILE, self.test_ids, self.env_ids)
 
         if is_meta_training:
             for iteration in range(self.outer_iterations):
@@ -285,7 +243,7 @@ class Agent():
                     torch.save(self.meta_model.state_dict(), self.MODEL_FILE)
                 iterations.append(iteration)
                 iteration_reward.append(np.mean(list(rewards.values())))
-                self.save_graph(iteration_reward, iterations)
+                gs.save_graph(iteration_reward, iterations)
                 torch.save(self.meta_model.state_dict(), self.MODEL_FILE_LATEST)
         else:
             rewards_dict_meta = {env: None for env in self.test_ids}
@@ -305,85 +263,12 @@ class Agent():
                 print(f"Env: {env}, Mean Reward: {np.mean(r_per_ep_metaless)}, Max Reward: {np.max(r_per_ep_metaless)}")
                 rewards_dict_metaless[env] = r_per_ep_metaless
 
-            self.save_meta_graph(rewards_dict_meta, rewards_dict_metaless)
-
-    def optimize(self, minibatch, model, target_model):
-        states, actions, rewards, next_states, terminations = zip(*minibatch)
-        states = torch.stack(states)
-        actions = torch.stack(actions)
-        rewards = torch.stack(rewards)
-        next_states = torch.stack(next_states).float()
-        terminations = torch.tensor(terminations, dtype=torch.float32).to(device)
-
-        with torch.no_grad():
-            target_q = rewards + (1 - terminations) * self.discount_factor_g * target_model(next_states).max(dim=1)[0]
-
-        current_q = model(states).gather(dim=1, index=actions.unsqueeze(dim=1)).squeeze()
-        loss = self.loss_fn(current_q, target_q)
-
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-        #for param in model.parameters():
-        #    param.data -= self.learning_rate_a * param.grad.data
-
-    def save_graph(self, avg_rewards, iteration):
-        fig = plt.figure()
-        plt.subplot(111)
-        plt.ylabel("avg_Reward")
-        plt.plot(avg_rewards)
-        fig.savefig(self.PLOT_FILE)
-        plt.close(fig)
-
-    def save_meta_graph(self, rewards_with_model, rewards_without_model):
-        # Create subplots
-        num_envs = len(self.test_ids)
-        fig, axs = plt.subplots(num_envs, 1, figsize=(12, 6 * num_envs))
-
-        # If there's only one environment, wrap axs in a list
-        if num_envs == 1:
-            axs = [axs]
-
-        # Plot rewards for each environment
-        for i, env in enumerate(self.test_ids):
-            axs[i].plot(rewards_with_model[env], label='With Meta Model')
-            axs[i].plot(rewards_without_model[env], label='Without Meta Model')
-            axs[i].set_title(f'Rewards for {env}')
-            axs[i].set_ylabel('Reward')
-            axs[i].legend()
-
-        # Save the figure
-        plt.tight_layout()
-        fig.savefig(self.META_PLOT_FILE)
-        plt.close(fig)
-
-    def save_learning_curves(self, rewards, iteration):
-        fig, axs = plt.subplots(len(self.env_ids), 1, figsize=(10, 5 * len(self.env_ids)))
-        for i, env in enumerate(self.env_ids):
-            axs[i].plot(rewards[env], label=f'Env {env}')
-            axs[i].set_title(f'Environment: {env}')
-            axs[i].set_ylabel('Reward')
-            axs[i].set_xlabel('Episode')
-            axs[i].legend()
-        plt.tight_layout()
-        fig.savefig(f"{self.PLOT_FILE}_learning_curves_iter_{iteration}.png")
-        plt.close(fig)
+            gs.save_meta_graph(rewards_dict_meta, rewards_dict_metaless)
 
     def relative_improvement(self, rewards):
         initial_reward = rewards[0]
         final_reward = rewards[-1]
-        return (final_reward - initial_reward) / (abs(initial_reward) + 1e-8)  # Avoid division by z
-
-    def delete_env_dir(self, env_dir):
-        if os.path.exists(env_dir):
-            shutil.rmtree(env_dir)
-            print("The directory has been deleted successfully")
-        else:
-            print("The directory does not exist")
-
-
-
-
+        return (final_reward - initial_reward) / (abs(initial_reward) + 1e-8)  # Avoid division by zero
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Train or test DQN agent on CartPole-v0')
