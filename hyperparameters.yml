@@ -34,10 +34,10 @@ reptile:
   epsilon_initial: 1
   epsilon_decay: 0.99
   epsilon_min: 0.01
-  network_sync_rate: 150
+  network_sync_rate: 400
   learning_rate_a: 0.001
   lr_outer: 0.0005
-  inner_iterations: 1
+  inner_iterations: 2
   outer_iterations: 1000
   discount_factor_g: 0.99
   hidden_dim: 128
