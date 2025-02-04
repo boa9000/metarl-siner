@@ -35,7 +35,18 @@ class TaskModel(nn.Module):
         x = self.output_layer(x)
         return x
     
+class MetaModel(nn.Module):
+    def __init__(self, hidden_dim):
+        super(MetaModel, self).__init__()
+        self.hidden = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU()
+        )
 
+    def forward(self, x):
+        return self.hidden(x)
 
 class DQNAgent:
     def __init__(self, agent, env, is_meta_training= True):
@@ -56,13 +67,15 @@ class DQNAgent:
         self.minibatch_size = agent.minibatch_size
         self.session_length = agent.session_length
         self.loss_fn = nn.MSELoss()
-        self.variables = agent.variables
         self.discount_factor_g = agent.discount_factor_g
+        self.envs = agent.envs
+        self.test_envs = agent.test_envs
 
 
-        self.env = get_env(env, variables= self.variables,is_meta_training=self.is_meta_training)
+        self.env = get_env(self, env,is_meta_training=self.is_meta_training)
         num_actions = self.env.action_space.n
         num_states = self.env.observation_space.shape[0]
+        num_states = 15
         if self.equal_input_output:
             if self.meta_model is None:
                 self.meta_model = DQNnetwork(self.hidden_dim, num_states, num_actions).to(self.device)
@@ -82,24 +95,25 @@ class DQNAgent:
         self.target_model.load_state_dict(self.model.state_dict())
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr_inner)
         self.step_count = 0
-        self.rewards_per_session = []
 
 
 
 
     def get_action(self, env, state):
+        #state = torch.tensor(state, dtype=torch.float32, device=self.device)
         if random.random() < self.epsilon:
             action = env.action_space.sample()
             action = torch.tensor(action, dtype=torch.int64, device=self.device)
         else:
             with torch.no_grad():
                 action = self.model(state.unsqueeze(dim=0)).squeeze().argmax()
-        return action
+        return action, 0, 0
     
     def update_epsilon(self):
         self.epsilon = max(self.epsilon * self.epsilon_decay, self.epsilon_min)
 
-    def train(self, num_steps, stuff):
+    def learn(self, num_steps, stuff):
+        
         self.memory.append(stuff)
         if (len(self.memory) > self.minibatch_size) and (num_steps % 2 == 0):
             minibatch = self.memory.sample(self.minibatch_size)
@@ -108,10 +122,8 @@ class DQNAgent:
             self.update_epsilon()
 
 
-
-
     def optimize(self, minibatch, model, target_model):
-        states, actions, rewards, next_states, terminations = zip(*minibatch)
+        states, actions, rewards, next_states, terminations, _,_a = zip(*minibatch)
         states = torch.stack(states)
         actions = torch.stack(actions)
         rewards = torch.stack(rewards)

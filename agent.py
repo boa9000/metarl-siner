@@ -22,6 +22,7 @@ import DQN
 import PPO
 from organize_tools import delete_env_dir
 from visualization_tools import GraphSaver
+from environment import adjust_state
 
 DATE_FORMAT = "%m-%d %H:%M:%S"
 RUNS_DIR = "runs"
@@ -42,9 +43,12 @@ class Agent():
             hyperparameters = all_hyperparameters[hyperparameter_set]
 
             self.hyperparameter_set = hyperparameter_set
-            self.env_ids = hyperparameters['env_ids']
-            self.test_ids = hyperparameters['test_ids']
-            self.variables = hyperparameters['variables']
+            self.envs = hyperparameters['env_ids']
+            self.env_ids = list(self.envs.keys())
+            print(self.env_ids)
+            self.test_envs = hyperparameters['test_ids']
+            self.test_ids = list(self.test_envs.keys())
+            print(self.test_ids)
             self.replay_buffer_size = hyperparameters["replay_buffer_size"]
             self.minibatch_size = hyperparameters["minibatch_size"]
             self.session_length = hyperparameters["session_length"]
@@ -63,6 +67,7 @@ class Agent():
             self.meta_algorithm = hyperparameters["meta_algorithm"]
             self.equal_input_output = hyperparameters["equal_input_output"]
             self.inner_algo = hyperparameters["inner_algo"]
+            self.inner_algo = "DQN"
 
 
             #self.meta_model = MetaModel(self.hidden_dim).to(device)
@@ -80,11 +85,17 @@ class Agent():
             self.device = device
 
     def run_inner(self, env, is_training=True, is_meta_training=True):
-        self.inner_algo = 'PPO'
+        self.inner_algo = 'DQN'
         if self.inner_algo == 'DQN':
-            algo = DQN.DQNAgent(self, env, is_meta_training)
+            algo = DQN.DQNAgent(self, env, is_meta_training = is_meta_training)
+            if self.meta_model is None:
+                self.meta_model = algo.meta_model
         if self.inner_algo == 'PPO':
-            algo = PPO.PPOAgent(self, env, is_meta_training)
+            algo = PPO.PPOAgent(self, env, is_meta_training = is_meta_training)
+            if self.meta_model is None:
+                self.meta_model = algo.meta_model
+                self.meta_actor = self.meta_model.actor
+                self.meta_critic = self.meta_model.critic
             pass
         
         rewards_per_session = []
@@ -94,26 +105,28 @@ class Agent():
         
         for episode in range(num_of_iterations):
             state, _ = algo.env.reset()
+            state = adjust_state(env, state)
             state = torch.tensor(state, dtype=torch.float, device=device)
             done = False
             session_reward = 0.0
 
             while (not done):
-                action = algo.get_action(algo.env, state)
+                action, probs, value = algo.get_action(algo.env, state)
                 
                 new_state, reward, terminated, turnicated, info = algo.env.step(action.item())
                 #print(f"action: {action.item()}, state: {state}, info: {info} reward: {reward}")
                 session_reward += reward
 
+                new_state = adjust_state(env, new_state)
                 new_state = torch.tensor(new_state, dtype=torch.float32).to(device)
                 reward = torch.tensor(reward, dtype=torch.float32).to(device)
 
-                stuff = (state, action, reward, new_state, terminated)
+                stuff = (state, action, reward, new_state, terminated, probs, value)
                 state = new_state
                 done = turnicated or terminated
                 step_count += 1
 
-                algo.train(step_count,stuff)
+                algo.learn(step_count,stuff)
 
                 if step_count % self.session_length == 0:
                     rewards_per_session.append(session_reward)
@@ -231,11 +244,12 @@ class Agent():
             rewards_dict_meta = {env: None for env in self.test_ids}
             rewards_dict_metaless = {env: None for env in self.test_ids}
             if self.inner_algo == 'DQN':
-                self.meta_model = DQN.DQNnetwork(self.hidden_dim, 11, 5).to(device)
+                self.meta_model = DQN.DQNnetwork(self.hidden_dim, 15, 5).to(device)
                 self.meta_model.load_state_dict(torch.load(self.MODEL_FILE_LATEST, weights_only=True))
             if self.inner_algo == 'PPO':
-                self.meta_actor = PPO.Actor(self.hidden_dim, 11, 5).to(device)
-                self.meta_critic = PPO.Critic(self.hidden_dim, 11).to(device)
+                self.meta_model = PPO.ActorCritic(PPO.Actor(self.hidden_dim, 15, 5).to(device), PPO.Critic(self.hidden_dim, 11).to(device)).to(device)
+                self.meta_actor = self.meta_model.actor
+                self.meta_critic = self.meta_model.critic
             print(f"with loaded model and {self.test_inner_iterations} episodes")
             for env in self.test_ids:
                 model, r_per_ep_meta = self.run_inner(env, is_training=True, is_meta_training=False)

@@ -2,21 +2,29 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from environment import get_env, env_start
+import numpy as np
+import torch.distributions as distributions
 
 
-class ActorCritic(nn.Module):
+class Actor(nn.Module):
     def __init__(self, hidden_dim, input_dim, output_dim):
-        super(ActorCritic, self).__init__()
-        # Actor component
-        self.actor = nn.Sequential(
+        super(Actor, self).__init__()
+        self.hidden = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, output_dim)
+            nn.Linear(hidden_dim, output_dim),
+            nn.Softmax(dim=-1)
         )
-        # Critic component
-        self.critic = nn.Sequential(
+
+    def forward(self, x):
+        return self.hidden(x)
+    
+class Critic(nn.Module):
+    def __init__(self, hidden_dim, input_dim):
+        super(Critic, self).__init__()
+        self.hidden = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
@@ -25,26 +33,78 @@ class ActorCritic(nn.Module):
         )
 
     def forward(self, x):
-        # Forward pass for actor
-        action_probs = F.softmax(self.actor(x), dim=-1)
-        # Forward pass for critic
+        return self.hidden(x)
+
+
+
+class ActorCritic(nn.Module):
+    def __init__(self, actor, critic):
+        super(ActorCritic, self).__init__()
+        self.actor = actor
+        self.critic = critic
+
+    def forward(self, x):
+        action_probs = self.actor(x)
         value = self.critic(x)
         return action_probs, value
     
 
+class PPOMemory:
+    def __init__(self, batch_size):
+        self.states = []
+        self.probs = []
+        self.vals = []
+        self.actions = []
+        self.rewards = []
+        self.dones = []
+
+        self.batch_size = batch_size
+
+    def generate_batches(self):
+        n_states = len(self.states)
+        batch_start = np.arange(0, n_states, self.batch_size)
+        indices = np.arange(n_states, dtype=np.int64)
+        np.random.shuffle(indices)
+        batches = [indices[i:i+self.batch_size] for i in batch_start]
+
+        return np.array(self.states),\
+                np.array(self.actions),\
+                np.array(self.probs),\
+                np.array(self.vals),\
+                np.array(self.rewards),\
+                np.array(self.dones),\
+                batches
+
+    def store_memory(self, state, action, probs, vals, reward, done):
+        self.states.append(state)
+        self.actions.append(action)
+        self.probs.append(probs)
+        self.vals.append(vals)
+        self.rewards.append(reward)
+        self.dones.append(done)
+
+    def clear_memory(self):
+        self.states = []
+        self.probs = []
+        self.actions = []
+        self.rewards = []
+        self.dones = []
+        self.vals = []
+
     
 
 class PPOAgent:
-    def __init__(self, agent, env, hidden_dim, input_dim, output_dim, gamma=0.99, lambda_=0.95,
-                  clip_epsilon=0.2, epochs=4, lr=3e-4, is_meta_training= True):
+    def __init__(self, agent, env, gamma=0.99, alpha=0.0003, gae_lambda=0.95,
+            policy_clip=0.2, batch_size=5, n_epochs=5, steps=20, is_meta_training= True):
         self.meta_model = agent.meta_model
-        self.optimizer_actor = torch.optim.Adam(self.actor.parameters(), lr=lr)
-        self.optimizer_critic = torch.optim.Adam(self.critic.parameters(), lr=lr)
+        self.optimizer_actor = None
+        self.optimizer_critic = None
         self.gamma = gamma
-        self.lambda_ = lambda_
-        self.clip_epsilon = clip_epsilon
-        self.epochs = epochs
-        self.rollout_length = 128
+        self.gae_lambda = gae_lambda
+        self.alpha = alpha
+        self.policy_clip = policy_clip
+        self.epochs = n_epochs
+        self.batch_size = batch_size
         self.variables = agent.variables
         self.equal_input_output = agent.equal_input_output
         self.meta_actor = agent.meta_actor
@@ -54,28 +114,29 @@ class PPOAgent:
         self.device = agent.device 
         self.is_meta_training = is_meta_training
         self.loss_fn = nn.MSELoss()
+        self.hidden_dim = agent.hidden_dim
+        self.steps = steps
+        self.lr = agent.learning_rate_a
+        self.envs = agent.envs
+        self.test_envs = agent.test_envs
+        
+        self.memory = PPOMemory(self.batch_size)
 
-        self.states = []
-        self.actions = []
-        self.rewards = []
-        self.dones = []
-
-        self.env = get_env(env, variables= self.variables,is_meta_training=self.is_meta_training)
+        self.env = get_env(self, env, is_meta_training=self.is_meta_training)
         num_actions = self.env.action_space.n
         num_states = self.env.observation_space.shape[0]
         if self.equal_input_output:
             if self.meta_model is None:
-                self.meta_model = ActorCritic(hidden_dim, num_states, num_actions).to(self.device)
-                self.meta_actor = self.meta_model.actor
-                self.meta_critic = self.meta_model.critic
+                self.meta_actor = Actor(self.hidden_dim, num_states, num_actions).to(self.device)
+                self.meta_critic = Critic(self.hidden_dim, num_states).to(self.device)
+                self.meta_model = ActorCritic(self.meta_actor, self.meta_critic).to(self.device)
 
-            self.model = ActorCritic(hidden_dim, num_states, num_actions).to(self.device)
+            self.model = ActorCritic(self.meta_actor, self.meta_critic).to(self.device)
+            self.model.load_state_dict(self.meta_model.state_dict())
             self.actor = self.model.actor
-            self.actor.load_state_dict(self.meta_actor.state_dict())
             self.critic = self.model.critic
-            self.critic.load_state_dict(self.meta_critic.state_dict())
-            self.optimizer_actor = torch.optim.Adam(self.actor.parameters(), lr=lr)
-            self.optimizer_critic = torch.optim.Adam(self.critic.parameters(), lr=lr)
+            self.optimizer_actor = torch.optim.Adam(self.actor.parameters(), lr=self.lr)
+            self.optimizer_critic = torch.optim.Adam(self.critic.parameters(), lr=self.lr)
         else:
             pass
 
@@ -83,76 +144,80 @@ class PPOAgent:
         self.critic.train()
 
 
+    def remember(self, state, action, probs, vals, reward, done):
+            self.memory.store_memory(state, action, probs, vals, reward, done)
+
+
+    def get_action(self, env, observation):
+        state = torch.tensor(observation, dtype=torch.float).to(self.device)
+
+        dist = distributions.Categorical(self.actor(state))
+        value = self.critic(state)
+        action = dist.sample()
+
+        probs = torch.squeeze(dist.log_prob(action)).item()
+        action = torch.squeeze(action)
+        value = torch.squeeze(value).item()
+
+        return action, probs, value
 
 
 
+    def learn(self, step_count, stuff):
+        state = stuff[0]
+        action = stuff[1].item()
+        reward = stuff[2].item()
+        done = stuff[4]
+        probs = stuff[5]
+        vals = stuff[6]
+        self.remember(state, action, probs, vals, reward, done)
+        if step_count % self.steps == 0:
+            for _ in range(self.epochs):
+                state_arr, action_arr, old_prob_arr, vals_arr,\
+                reward_arr, dones_arr, batches = \
+                        self.memory.generate_batches()
 
-    def append_rollout(self, stuff):
-        self.states.append(stuff[0])
-        self.actions.append(stuff[1])
-        self.rewards.append(stuff[2])
-        self.dones.append(torch.tensor(stuff[3], dtype=torch.float32))
+                values = vals_arr
+                advantage = np.zeros(len(reward_arr), dtype=np.float32)
 
+                for t in range(len(reward_arr)-1):
+                    discount = 1
+                    a_t = 0
+                    for k in range(t, len(reward_arr)-1):
+                        a_t += discount*(reward_arr[k] + self.gamma*values[k+1]*\
+                                (1-int(dones_arr[k])) - values[k])
+                        discount *= self.gamma*self.gae_lambda
+                    advantage[t] = a_t
+                advantage = torch.tensor(advantage).to(self.device)
 
-    def clear_rollout(self):
-        self.states = []
-        self.actions = []
-        self.rewards = []
-        self.dones = []
+                values = torch.tensor(values).to(self.device)
+                for batch in batches:
+                    states = torch.tensor(state_arr[batch], dtype=torch.float).to(self.device)
+                    old_probs = torch.tensor(old_prob_arr[batch]).to(self.device)
+                    actions = torch.tensor(action_arr[batch]).to(self.device)
 
-    def train(self, num_steps, stuff):
-        self.append_rollout(stuff)
+                    dist = distributions.Categorical(self.actor(states))
+                    critic_value = self.critic(states)
 
-        if len(self.states) > self.rollout_length:
-            self.optimize(stuff, self.dones)
-            self.clear_rollout()
+                    critic_value = torch.squeeze(critic_value)
 
+                    new_probs = dist.log_prob(actions)
+                    prob_ratio = new_probs.exp() / old_probs.exp()
+                    #prob_ratio = (new_probs - old_probs).exp()
+                    weighted_probs = advantage[batch] * prob_ratio
+                    weighted_clipped_probs = torch.clamp(prob_ratio, 1-self.policy_clip,
+                            1+self.policy_clip)*advantage[batch]
+                    actor_loss = -torch.min(weighted_probs, weighted_clipped_probs).mean()
 
-    def compute_gae(self, rewards, values, dones):
-        gae = 0
-        advantages = []
-        for t in reversed(range(len(rewards))):
-            delta = rewards[t] + self.gamma * values[t + 1] * (1 - dones[t]) - values[t]
-            gae = delta + self.gamma * self.lambda_ * (1 - dones[t]) * gae
-            advantages.insert(0, gae)
-        return torch.tensor(advantages, dtype=torch.float32)
+                    returns = advantage[batch] + values[batch]
+                    critic_loss = (returns-critic_value)**2
+                    critic_loss = critic_loss.mean()
 
+                    total_loss = actor_loss + 0.5*critic_loss
+                    self.optimizer_actor.zero_grad()
+                    self.optimizer_critic.zero_grad()
+                    total_loss.backward()
+                    self.optimizer_actor.step()
+                    self.optimizer_critic.step()
 
-    def optimize(self, stuff, dones):
-        # Compute values and log probabilities
-        values = self.critic(self.states).squeeze()
-        probs = self.actor(self.states)
-        dist = torch.distributions.Categorical(probs)
-        log_probs_old = dist.log_prob(self.actions).detach()
-
-        # Compute GAE
-        advantages = self.compute_gae(self.rewards, values, dones)
-        returns = advantages + values[:-1]
-
-        # Update Actor and Critic for multiple epochs
-        for _ in range(self.epochs):
-            # Compute new log probabilities and values
-            probs = self.actor(self.states)
-            dist = torch.distributions.Categorical(probs)
-            log_probs_new = dist.log_prob(self.actions)
-            values_new = self.critic(self.states).squeeze()
-
-            # Compute ratios and clipped objective
-            ratios = torch.exp(log_probs_new - log_probs_old)
-            surr1 = ratios * advantages
-            surr2 = torch.clamp(ratios, 1 - self.clip_epsilon, 1 + self.clip_epsilon) * advantages
-            actor_loss = -torch.min(surr1, surr2).mean()
-
-            # Compute Critic loss
-            critic_loss = nn.MSELoss()(values_new[:-1], returns)
-
-            # Update networks
-            self.optimizer_actor.zero_grad()
-            self.optimizer_critic.zero_grad()
-            actor_loss.backward()
-            critic_loss.backward()
-            self.optimizer_actor.step()
-            self.optimizer_critic.step()
-
-
-
+        self.memory.clear_memory()               

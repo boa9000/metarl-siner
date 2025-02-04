@@ -2,32 +2,184 @@
 
 reptile:
   env_ids: 
-    - Eplus-5zone-hot-continuous-stochastic-v1
-    - Eplus-5zone-cool-continuous-stochastic-v1
+    Eplus-5zone-mixed-continuous-stochastic-v1:
+      meters:
+      variables:
+        outdoor_temperature:
+          - Site Outdoor Air Drybulb Temperature
+          - Environment
+        outdoor_humidity:
+          - Site Outdoor Air Relative Humidity
+          - Environment
+        wind_speed:
+          - Site Wind Speed
+          - Environment
+        wind_direction:
+          - Site Wind Direction
+          - Environment
+        diff_solar_radiation:
+          - Site Diffuse Solar Radiation Rate per Area
+          - Environment
+        direct_solar_radiation:
+          - Site Direct Solar Radiation Rate per Area
+          - Environment
+        htg_setpoint:
+          - Zone Thermostat Heating Setpoint Temperature
+          - SPACE5-1
+        clg_setpoint:
+          - Zone Thermostat Cooling Setpoint Temperature
+          - SPACE5-1
+        air_temperature:
+          - Zone Air Temperature
+          - SPACE5-1
+        air_humidity:
+          - Zone Air Relative Humidity
+          - SPACE5-1
+        people_occupant:
+          - Zone People Occupant Count
+          - SPACE5-1
+        HVAC_electricity_demand_rate:
+          - Facility Total HVAC Electricity Demand Rate
+          - Whole Building
+
+    Eplus-shop-mixed-continuous-stochastic-v1:
+      meters:
+      variables:
+        outdoor_temperature:
+          - Site Outdoor Air Drybulb Temperature
+          - Environment
+        outdoor_humidity:
+          - Site Outdoor Air Relative Humidity
+          - Environment
+        wind_speed:
+          - Site Wind Speed
+          - Environment
+        wind_direction:
+          - Site Wind Direction
+          - Environment
+        diff_solar_radiation:
+          - Site Diffuse Solar Radiation Rate per Area
+          - Environment
+        direct_solar_radiation:
+          - Site Direct Solar Radiation Rate per Area
+          - Environment
+        htg_setpoint:
+          - Zone Thermostat Heating Setpoint Temperature
+          - ZN_1_FLR_1_SEC_5
+        clg_setpoint:
+          - Zone Thermostat Cooling Setpoint Temperature
+          - ZN_1_FLR_1_SEC_5
+        zn_1_flr_1_sec_1_air_temperature:
+          - Zone Air Temperature
+          - ZN_1_FLR_1_SEC_1
+        zn_1_flr_1_sec_2_air_temperature:
+          - Zone Air Temperature
+          - ZN_1_FLR_1_SEC_2
+        zn_1_flr_1_sec_3_air_temperature:
+          - Zone Air Temperature
+          - ZN_1_FLR_1_SEC_3
+        zn_1_flr_1_sec_4_air_temperature:
+          - Zone Air Temperature
+          - ZN_1_FLR_1_SEC_4
+        zn_1_flr_1_sec_5_air_temperature:
+          - Zone Air Temperature
+          - ZN_1_FLR_1_SEC_5
+        zn_1_flr_1_sec_1_air_humidity:
+          - Zone Air Relative Humidity
+          - ZN_1_FLR_1_SEC_1
+        zn_1_flr_1_sec_2_air_humidity:
+          - Zone Air Relative Humidity
+          - ZN_1_FLR_1_SEC_2
+        zn_1_flr_1_sec_3_air_humidity:
+          - Zone Air Relative Humidity
+          - ZN_1_FLR_1_SEC_3
+        zn_1_flr_1_sec_4_air_humidity:
+          - Zone Air Relative Humidity
+          - ZN_1_FLR_1_SEC_4
+        zn_1_flr_1_sec_5_air_humidity:
+          - Zone Air Relative Humidity
+          - ZN_1_FLR_1_SEC_5
+        zn_1_flr_1_sec_1_people_count:
+          - Zone People Occupant Count
+          - ZN_1_FLR_1_SEC_1
+        zn_1_flr_1_sec_2_people_count:
+          - Zone People Occupant Count
+          - ZN_1_FLR_1_SEC_2
+        zn_1_flr_1_sec_3_people_count:
+          - Zone People Occupant Count
+          - ZN_1_FLR_1_SEC_3
+        zn_1_flr_1_sec_4_people_count:
+          - Zone People Occupant Count
+          - ZN_1_FLR_1_SEC_4
+        zn_1_flr_1_sec_5_people_count:
+          - Zone People Occupant Count
+          - ZN_1_FLR_1_SEC_5
+        HVAC_electricity_demand_rate:
+          - Facility Total HVAC Electricity Demand Rate
+          - Whole Building
+
   test_ids:
-    - Eplus-5zone-mixed-continuous-v1
-  variables:
-    outdoor_temperature:
-      - Site Outdoor Air Drybulb Temperature
-      - Environment
-    direct_solar_radiation:
-      - Site Direct Solar Radiation Rate per Area
-      - Environment
-    htg_setpoint:
-      - Zone Thermostat Heating Setpoint Temperature
-      - SPACE5-1
-    clg_setpoint:
-      - Zone Thermostat Cooling Setpoint Temperature
-      - SPACE5-1
-    air_temperature:
-      - Zone Air Temperature
-      - SPACE5-1
-    people_occupant:
-      - Zone People Occupant Count
-      - SPACE5-1
-    HVAC_electricity_demand_rate:
-      - Facility Total HVAC Electricity Demand Rate
-      - Whole Building
+    Eplus-datacenter-mixed-continuous-v1:
+      meters:
+      variables:
+        outdoor_temperature:
+          - Site Outdoor Air Drybulb Temperature
+          - Environment
+        outdoor_humidity:
+          - Site Outdoor Air Relative Humidity
+          - Environment
+        wind_speed:
+          - Site Wind Speed
+          - Environment
+        wind_direction:
+          - Site Wind Direction
+          - Environment
+        diff_solar_radiation:
+          - Site Diffuse Solar Radiation Rate per Area
+          - Environment
+        direct_solar_radiation:
+          - Site Direct Solar Radiation Rate per Area
+          - Environment
+        west_zone_htg_setpoint:
+          - Zone Thermostat Heating Setpoint Temperature
+          - West Zone
+        east_zone_htg_setpoint:
+          - Zone Thermostat Heating Setpoint Temperature
+          - East Zone
+        west_zone_clg_setpoint:
+          - Zone Thermostat Cooling Setpoint Temperature
+          - West Zone
+        east_zone_clg_setpoint:
+          - Zone Thermostat Cooling Setpoint Temperature
+          - East Zone
+        west_zone_air_temperature:
+          - Zone Air Temperature
+          - West Zone
+        east_zone_air_temperature:
+          - Zone Air Temperature
+          - East Zone
+        west_zone_air_humidity:
+          - Zone Air Relative Humidity
+          - West Zone
+        east_zone_air_humidity:
+          - Zone Air Relative Humidity
+          - East Zone
+        west_zone_people_occupant:
+          - Zone People Occupant Count
+          - West Zone
+        east_zone_people_occupant:
+          - Zone People Occupant Count
+          - East Zone
+        west_zone_people_people_air_temperature:
+          - People Air Temperature
+          - West Zone PEOPLE
+        east_zone_people_people_air_temperature:
+          - People Air Temperature
+          - East Zone PEOPLE
+        HVAC_electricity_demand_rate:
+          - Facility Total HVAC Electricity Demand Rate
+          - Whole Building
+  
   replay_buffer_size: 100000
   minibatch_size: 64
   session_length: 96
@@ -43,7 +195,7 @@ reptile:
   hidden_dim: 128
   enable_double_dqn: False
   enable_dueling_dqn: False
-  test_inner_iterations: 5
+  test_inner_iterations: 1
   meta_algorithm: reptile
   equal_input_output: True
   inner_algo: 'DQN'
