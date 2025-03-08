@@ -49,7 +49,7 @@ class MetaModel(nn.Module):
         return self.hidden(x)
 
 class DQNAgent:
-    def __init__(self, agent, env, is_meta_training= True):
+    def __init__(self, agent, meta_model, env, weather, is_meta_training= True):
 
         self.epsilon_initial = agent.epsilon_initial
         self.epsilon_decay = agent.epsilon_decay
@@ -59,7 +59,7 @@ class DQNAgent:
         self.hidden_dim = agent.hidden_dim
         self.replay_buffer_size = agent.replay_buffer_size
         self.equal_input_output = agent.equal_input_output
-        self.meta_model = agent.meta_model
+        self.meta_model = meta_model
         self.optimizer = None
         self.MODEL_FILE = agent.MODEL_FILE
         self.device = agent.device 
@@ -70,9 +70,10 @@ class DQNAgent:
         self.discount_factor_g = agent.discount_factor_g
         self.envs = agent.envs
         self.test_envs = agent.test_envs
+        self.period = agent.period
 
 
-        self.env = get_env(self, env,is_meta_training=self.is_meta_training)
+        self.env = get_env(self, env, self.period, weather, is_meta_training=self.is_meta_training)
         num_actions = self.env.action_space.n
         num_states = self.env.observation_space.shape[0]
         num_states = 15

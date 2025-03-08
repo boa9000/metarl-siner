@@ -15,7 +15,7 @@ class GraphSaver:
         fig.savefig(self.PLOT_FILE)
         plt.close(fig)
 
-    def save_meta_graph(self, rewards_with_model, rewards_without_model):
+    def save_meta_graph(self, rewards_with_model, rewards_without_model, rewards_dummy):
         num_envs = len(self.test_ids)
         fig, axs = plt.subplots(num_envs, 1, figsize=(12, 6 * num_envs))
 
@@ -25,6 +25,7 @@ class GraphSaver:
         for i, env in enumerate(self.test_ids):
             axs[i].plot(rewards_with_model[env], label='With Meta Model')
             axs[i].plot(rewards_without_model[env], label='Without Meta Model')
+            axs[i].plot(rewards_dummy[env], label='No Actions')
             axs[i].set_title(f'Rewards for {env}')
             axs[i].set_ylabel('Reward')
             axs[i].legend()
@@ -44,6 +45,15 @@ class GraphSaver:
         plt.tight_layout()
         fig.savefig(f"{self.PLOT_FILE}_learning_curves_iter_{iteration}.png")
         plt.close(fig)
+
+    def save_validation_curve(self, vali_curve, iteration):
+        fig = plt.figure()
+        plt.plot(vali_curve)
+        plt.ylabel("Difference between Meta and Metaless")
+        plt.xlabel("Episode")
+        plt.title("Validation curve over episodes")
+        fig.savefig(f"{self.PLOT_FILE}_validation_curve.png")
+        plt.close
 
     @staticmethod
     def relative_improvement(rewards):

@@ -2,27 +2,25 @@ import gymnasium as gym
 import sinergym
 from sinergym.utils.wrappers import *
 import numpy as np
+import os
+import random
 
 
 #seed = np.random.randint(0,17022025)
 
-seed = 124
+seed = 12465441
 
-def get_env(agent, env, is_meta_training= True):
+def get_env(agent, env, period, weather, is_meta_training= True):
     if is_meta_training == True:
         variables = agent.envs[env]['variables']
         meters = {}
 
-        day = np.random.randint(1,28-6)
-        month = np.random.randint(1,13)
-        year = 1999
-        period = (day, month, year, day+6, month, year)
         timestepph = 1
         extra_params={'runperiod': period}
-        env = gym.make(env, config_params = extra_params, variables = variables, meters = meters)
+        env = gym.make(env, weather_files = weather, config_params = extra_params, variables = variables, meters = meters)
         #env = gym.make(env, variables = variables, meters = meters)
         env = DiscreteIncrementalWrapper(
-            env, initial_values=[15.0, 30.0], delta_temp=1, step_temp=1)
+            env, initial_values=[20.0, 25.0], delta_temp=1, step_temp=1)
         env = NormalizeObservation(
             env=env)
     else:
@@ -32,15 +30,15 @@ def get_env(agent, env, is_meta_training= True):
         np.random.seed(seed=seed)
         random.seed(seed)
         day = np.random.randint(1,(28-0))
-        month = np.random.randint(1,13-1)
+        month = np.random.randint(1,13-3)
         year = 1999
-        period = (day, month, year, day+0, month+1, year)
+        period = (day, month, year, day+0, month+3, year)
         timestepph = 1
         extra_params={'runperiod': period}
-        #env = gym.make(env, config_params = extra_params, variables = variables, meters = meters)
-        env = gym.make(env, variables = variables, meters = meters)
+        env = gym.make(env, weather_files = weather, config_params = extra_params, variables = variables, meters = meters)
+        #env = gym.make(env, variables = variables, meters = meters)
         env = DiscreteIncrementalWrapper(
-            env, initial_values=[15.0, 30.0], delta_temp=1, step_temp=1)
+            env, initial_values=[20.0, 25.0], delta_temp=1, step_temp=1)
         env = NormalizeObservation(
             env=env)
         
@@ -84,3 +82,27 @@ def adjust_state(env, state):
     #print(len(new_state))
     return new_state
 
+def obtain_weather():
+    weather_dir = os.path.join(sinergym.__path__[0], 'data', 'weather')
+    weather_files = [f for f in os.listdir(weather_dir) if f.endswith('.epw')]
+    #random.shuffle(weather_files)
+
+    
+    trainidx = int(len(weather_files) * 0.60)
+    valididx = int(len(weather_files) * 0.90)
+    weather_train = weather_files[:trainidx]
+    weather_validate = weather_files[trainidx:valididx]
+    weather_test = weather_files[valididx:]
+
+    return weather_train, weather_validate, weather_test
+
+
+def obtain_period():
+    diff = 7
+    day = np.random.randint(1,28-diff)
+    month = np.random.randint(1,13)
+    year = 1999
+    #eriods = [(d, m, year, d + diff, m, year) for d, m in zip(days, months)]
+    period = (day, month, year, day+diff, month, year)
+
+    return period

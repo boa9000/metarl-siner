@@ -22,7 +22,7 @@ import DQN
 import PPO
 from organize_tools import delete_env_dir
 from visualization_tools import GraphSaver
-from environment import adjust_state
+from environment import adjust_state, obtain_weather, obtain_period
 
 DATE_FORMAT = "%m-%d %H:%M:%S"
 RUNS_DIR = "runs"
@@ -32,7 +32,7 @@ matplotlib.use('Agg')
 device = "cuda" if torch.cuda.is_available() else "cpu"
 #device = "cpu"
 
-seed = np.random.randint(0,17022025)
+#seed = np.random.randint(0,17022025)
 #np.random.seed(seed=seed)
 #random.seed(seed)
 
@@ -68,6 +68,7 @@ class Agent():
             self.equal_input_output = hyperparameters["equal_input_output"]
             self.inner_algo = hyperparameters["inner_algo"]
             self.inner_algo = "DQN"
+            self.dummy = False
 
 
             #self.meta_model = MetaModel(self.hidden_dim).to(device)
@@ -84,14 +85,23 @@ class Agent():
             self.META_PLOT_FILE = os.path.join(RUNS_DIR, f"{self.hyperparameter_set}_meta.png")
             self.device = device
 
-    def run_inner(self, env, is_training=True, is_meta_training=True):
+            self.weather_train, self.weather_validate, self.weather_test = obtain_weather()
+            self.weather_default = "USA_NY_New.York-J.F.Kennedy.Intl.AP.744860_TMY3.epw"
+
+            self.period = obtain_period()
+
+    def run_inner(self, env, weather, is_training=True, is_meta_training=True, validate = False):
+        print(weather)
         self.inner_algo = 'DQN'
         if self.inner_algo == 'DQN':
-            algo = DQN.DQNAgent(self, env, is_meta_training = is_meta_training)
+            algo = DQN.DQNAgent(self, self.meta_model, env, weather, is_meta_training = is_meta_training)
             if self.meta_model is None:
                 self.meta_model = algo.meta_model
+            if validate:
+                algo = DQN.DQNAgent(self, None, env, weather, is_meta_training = is_meta_training)
+
         if self.inner_algo == 'PPO':
-            algo = PPO.PPOAgent(self, env, is_meta_training = is_meta_training)
+            algo = PPO.PPOAgent(self, self.meta_model, env, is_meta_training = is_meta_training)
             if self.meta_model is None:
                 self.meta_model = algo.meta_model
                 self.meta_actor = self.meta_model.actor
@@ -112,6 +122,8 @@ class Agent():
 
             while (not done):
                 action, probs, value = algo.get_action(algo.env, state)
+                if self.dummy:
+                    action = torch.tensor(0).to(device)
                 
                 new_state, reward, terminated, turnicated, info = algo.env.step(action.item())
                 #print(f"action: {action.item()}, state: {state}, info: {info} reward: {reward}")
@@ -141,7 +153,6 @@ class Agent():
         delete_env_dir(dir)
         model = algo.model
         return model, rewards_per_session
-
 
     def update_outer_reptile(self, meta_model, inner_model):
         if self.inner_algo == 'DQN':
@@ -218,8 +229,9 @@ class Agent():
 
         if is_meta_training:
             for iteration in range(self.outer_iterations):
+                self.period = obtain_period()
                 for env in self.env_ids:
-                    model, r_per_ep = self.run_inner(env, True, is_meta_training=True)
+                    model, r_per_ep = self.run_inner(env, self.weather_default, True, is_meta_training=True)
                     models[env] = model
                     rewards[env] = self.relative_improvement(r_per_ep)
                     max_rs[env] = np.max(r_per_ep)
@@ -243,6 +255,7 @@ class Agent():
         else:
             rewards_dict_meta = {env: None for env in self.test_ids}
             rewards_dict_metaless = {env: None for env in self.test_ids}
+            rewards_dict_dummy = {env: None for env in self.test_ids}
             if self.inner_algo == 'DQN':
                 self.meta_model = DQN.DQNnetwork(self.hidden_dim, 15, 5).to(device)
                 self.meta_model.load_state_dict(torch.load(self.MODEL_FILE_LATEST, weights_only=True))
@@ -252,7 +265,7 @@ class Agent():
                 self.meta_critic = self.meta_model.critic
             print(f"with loaded model and {self.test_inner_iterations} episodes")
             for env in self.test_ids:
-                model, r_per_ep_meta = self.run_inner(env, is_training=True, is_meta_training=False)
+                model, r_per_ep_meta = self.run_inner(env, self.weather_default, is_training=True, is_meta_training=False)
                 print(f"Env: {env}, Mean Reward: {np.mean(r_per_ep_meta)}, Max Reward: {np.max(r_per_ep_meta)}")
                 rewards_dict_meta[env] = r_per_ep_meta
             del self.meta_model
@@ -262,12 +275,107 @@ class Agent():
             self.meta_actor = None
             self.meta_critic = None
             print(f"without loaded model and {self.test_inner_iterations} episodes")
+            #self.dummy = True
             for env in self.test_ids:
-                model, r_per_ep_metaless = self.run_inner(env, is_training=True, is_meta_training=False)
+                model, r_per_ep_metaless = self.run_inner(env, self.weather_default, is_training=True, is_meta_training=False)
                 print(f"Env: {env}, Mean Reward: {np.mean(r_per_ep_metaless)}, Max Reward: {np.max(r_per_ep_metaless)}")
                 rewards_dict_metaless[env] = r_per_ep_metaless
 
-            gs.save_meta_graph(rewards_dict_meta, rewards_dict_metaless)
+            for env in self.test_ids:
+                self.dummy = True
+                model, r_per_ep_dummy = self.run_inner(env, self.weather_default, is_training=True, is_meta_training=False)
+                print(f"Env: {env}, Mean Reward: {np.mean(r_per_ep_dummy)}, Max Reward: {np.max(r_per_ep_dummy)}")
+                rewards_dict_dummy[env] = r_per_ep_dummy
+
+            gs.save_meta_graph(rewards_dict_meta, rewards_dict_metaless,rewards_dict_dummy)
+
+    def run_weather(self, is_meta_training=True):
+        iterations = []
+        iteration_reward = []
+        max_reward_avg = -1e9
+        rewards = {weather: None for weather in self.weather_train}
+        max_rs = {weather: None for weather in self.weather_train}
+        gs = GraphSaver(self.PLOT_FILE, self.META_PLOT_FILE, self.weather_test, self.weather_train)
+        validation_curve = []
+        env = self.env_ids[0]
+
+        if is_meta_training:
+            for iteration in range(self.outer_iterations):
+                self.period = obtain_period()
+                if iteration % 10 == 0:
+                    vali_avg_rewards_meta = []
+                    vali_avg_rewards_metaless = []
+                    print(f"Validation on iteration {iteration}")
+                    for weather in self.weather_validate:
+                        model, r_per_ep = self.run_inner(env, weather, True, is_meta_training=True)
+                        vali_avg_rewards_meta.append(np.mean(r_per_ep))
+                    for weather in self.weather_validate:
+                        model, r_per_ep = self.run_inner(env, weather, True, is_meta_training=True, validate = True)
+                        vali_avg_rewards_metaless.append(np.mean(r_per_ep))
+                    difference = np.mean(vali_avg_rewards_meta) - np.mean(vali_avg_rewards_metaless)
+                    print(f"Difference between averages: {difference}")
+                    validation_curve.append(difference)
+                    gs.save_validation_curve(validation_curve, iteration)
+
+
+                for weather in self.weather_train:
+                    model, r_per_ep = self.run_inner(env, weather, True, is_meta_training=True)
+                    rewards[weather] = self.relative_improvement(r_per_ep)
+                    max_rs[weather] = np.max(r_per_ep)
+
+                    if self.meta_algorithm == 'reptile':
+                        self.update_outer_reptile(self.meta_model, model)
+                    elif self.meta_algorithm == 'maml':
+                        self.update_outer_maml(self.meta_model, model)
+
+                rewards_list = [float(reward) for reward in rewards.values()]
+                avg_reward = np.mean(list(rewards.values()))
+                print(f"Iteration {iteration}, rewards: {rewards_list}, avg reward: {avg_reward:.3f}, best reward avg: {max_reward_avg:.3f}")
+                if avg_reward > max_reward_avg:
+                    print(f"New best model found with avg reward: {avg_reward}")
+                    max_reward_avg = avg_reward
+                    torch.save(self.meta_model.state_dict(), self.MODEL_FILE)
+                iterations.append(iteration)
+                iteration_reward.append(np.mean(list(rewards.values())))
+                gs.save_graph(iteration_reward, iterations)
+                torch.save(self.meta_model.state_dict(), self.MODEL_FILE_LATEST)
+        else:
+            rewards_dict_meta = {weather: None for weather in self.weather_test}
+            rewards_dict_metaless = {weather: None for weather in self.weather_test}
+            rewards_dict_dummy = {weather: None for weather in self.weather_test}
+            if self.inner_algo == 'DQN':
+                self.meta_model = DQN.DQNnetwork(self.hidden_dim, 15, 5).to(device)
+                self.meta_model.load_state_dict(torch.load(self.MODEL_FILE_LATEST, weights_only=True))
+            if self.inner_algo == 'PPO':
+                self.meta_model = PPO.ActorCritic(PPO.Actor(self.hidden_dim, 15, 5).to(device), PPO.Critic(self.hidden_dim, 11).to(device)).to(device)
+                self.meta_actor = self.meta_model.actor
+                self.meta_critic = self.meta_model.critic
+            print(f"with loaded model and {self.test_inner_iterations} episodes")
+            for weather in self.weather_test:
+                model, r_per_ep_meta = self.run_inner(env, weather, is_training=True, is_meta_training=False)
+                print(f"weather: {weather}, Mean Reward: {np.mean(r_per_ep_meta)}, Max Reward: {np.max(r_per_ep_meta)}")
+                rewards_dict_meta[weather] = r_per_ep_meta
+            del self.meta_model
+            del self.meta_actor
+            del self.meta_critic
+            self.meta_model = None
+            self.meta_actor = None
+            self.meta_critic = None
+            print(f"without loaded model and {self.test_inner_iterations} episodes")
+            #self.dummy = True
+            for weather in self.weather_test:
+                model, r_per_ep_metaless = self.run_inner(env, weather, is_training=True, is_meta_training=False)
+                print(f"weather: {weather}, Mean Reward: {np.mean(r_per_ep_metaless)}, Max Reward: {np.max(r_per_ep_metaless)}")
+                rewards_dict_metaless[weather] = r_per_ep_metaless
+
+            for weather in self.weather_test:
+                self.dummy = True
+                model, r_per_ep_dummy = self.run_inner(env, weather, is_training=True, is_meta_training=False)
+                print(f"Env: {env}, Mean Reward: {np.mean(r_per_ep_dummy)}, Max Reward: {np.max(r_per_ep_dummy)}")
+                rewards_dict_dummy[env] = r_per_ep_dummy
+
+            gs.save_meta_graph(rewards_dict_meta, rewards_dict_metaless,rewards_dict_dummy)
+
 
     def relative_improvement(self, rewards):
         initial_reward = rewards[0]
@@ -275,14 +383,28 @@ class Agent():
         return (final_reward - initial_reward) / (abs(initial_reward) + 1e-8)  # Avoid division by zero
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Train or test DQN agent on CartPole-v0')
+    parser = argparse.ArgumentParser(description='Train or test the agent')
     parser.add_argument('hyperparameters', help='')
-    parser.add_argument('--train', help='Training mode', action='store_true')
+    parser.add_argument('--train', help='Meta Train', action='store_true')
+   
+    parser.add_argument(
+        "--mode",
+        choices=["building", "weather"], 
+        required=True,  
+        help="Select mode: 'building' for building-based training, 'weather' for weather-based training."
+    )
+   
     args = parser.parse_args()
 
     rep = Agent(hyperparameter_set=args.hyperparameters)
 
     if args.train:
-        rep.run(is_meta_training=True)
+        if args.mode == "weather":
+            rep.run_weather(is_meta_training=True)
+        elif args.mode == "building":
+            rep.run(is_meta_training=True)
     else:
-        rep.run(is_meta_training=False)
+        if args.mode == "weather":
+            rep.run_weather(is_meta_training=False)
+        elif args.mode == "building":
+            rep.run(is_meta_training=False)
