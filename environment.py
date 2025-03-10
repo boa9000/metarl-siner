@@ -12,7 +12,12 @@ seed = 12465441
 
 def get_env(agent, env, period, weather, is_meta_training= True):
     if is_meta_training == True:
-        variables = agent.envs[env]['variables']
+        if 'datacenter' in str(env):
+            variables = agent.test_envs[env]['variables']
+        else:
+            variables = agent.envs[env]['variables']
+        
+
         meters = {}
 
         timestepph = 1
@@ -27,12 +32,6 @@ def get_env(agent, env, period, weather, is_meta_training= True):
         variables = agent.test_envs[env]['variables']
         meters = {}
 
-        np.random.seed(seed=seed)
-        random.seed(seed)
-        day = np.random.randint(1,(28-0))
-        month = np.random.randint(1,13-3)
-        year = 1999
-        period = (day, month, year, day+0, month+3, year)
         timestepph = 1
         extra_params={'runperiod': period}
         env = gym.make(env, weather_files = weather, config_params = extra_params, variables = variables, meters = meters)
@@ -88,7 +87,7 @@ def obtain_weather():
     #random.shuffle(weather_files)
 
     
-    trainidx = int(len(weather_files) * 0.60)
+    trainidx = int(len(weather_files) * 0.65)
     valididx = int(len(weather_files) * 0.90)
     weather_train = weather_files[:trainidx]
     weather_validate = weather_files[trainidx:valididx]
@@ -97,12 +96,16 @@ def obtain_weather():
     return weather_train, weather_validate, weather_test
 
 
-def obtain_period():
+def obtain_period(test = False):
+    test_diff = 0
     diff = 7
+    if test:
+        test_diff = 3
+        diff = 0
     day = np.random.randint(1,28-diff)
-    month = np.random.randint(1,13)
+    month = np.random.randint(1,13-test_diff)
     year = 1999
     #eriods = [(d, m, year, d + diff, m, year) for d, m in zip(days, months)]
-    period = (day, month, year, day+diff, month, year)
+    period = (day, month, year, day+diff, month+test_diff, year)
 
     return period

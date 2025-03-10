@@ -45,10 +45,12 @@ class Agent():
             self.hyperparameter_set = hyperparameter_set
             self.envs = hyperparameters['env_ids']
             self.env_ids = list(self.envs.keys())
-            print(self.env_ids)
+
             self.test_envs = hyperparameters['test_ids']
             self.test_ids = list(self.test_envs.keys())
-            print(self.test_ids)
+
+            self.test_id_weather = "Eplus-5zone-mixed-continuous-v1"
+
             self.replay_buffer_size = hyperparameters["replay_buffer_size"]
             self.minibatch_size = hyperparameters["minibatch_size"]
             self.session_length = hyperparameters["session_length"]
@@ -70,6 +72,9 @@ class Agent():
             self.inner_algo = "DQN"
             self.dummy = False
 
+            self.train_samples = 3
+            self.validate_samples = 1
+
 
             #self.meta_model = MetaModel(self.hidden_dim).to(device)
             self.meta_model = None
@@ -81,6 +86,10 @@ class Agent():
             self.LOG_FILE = os.path.join(RUNS_DIR, f"{self.hyperparameter_set}.log")
             self.MODEL_FILE = os.path.join(RUNS_DIR, f"{self.hyperparameter_set}.pt")
             self.MODEL_FILE_LATEST = os.path.join(RUNS_DIR, f"{self.hyperparameter_set}_latest.pt")
+            self.MODEL_FILE_LATEST_BUILDING = os.path.join(RUNS_DIR, f"{self.hyperparameter_set}_latest_building.pt")
+            self.MODEL_FILE_LATEST_WEATHER = os.path.join(RUNS_DIR, f"{self.hyperparameter_set}_latest_weather.pt")
+            self.MODEL_FILE_BEST_BUILDING = os.path.join(RUNS_DIR, f"{self.hyperparameter_set}_best_building.pt")
+            self.MODEL_FILE_BEST_WEATHER = os.path.join(RUNS_DIR, f"{self.hyperparameter_set}_best_weather.pt")
             self.PLOT_FILE = os.path.join(RUNS_DIR, f"{self.hyperparameter_set}.png")
             self.META_PLOT_FILE = os.path.join(RUNS_DIR, f"{self.hyperparameter_set}_meta.png")
             self.device = device
@@ -226,10 +235,35 @@ class Agent():
         rewards = {env: None for env in self.env_ids}
         max_rs = {env: None for env in self.env_ids}
         gs = GraphSaver(self.PLOT_FILE, self.META_PLOT_FILE, self.test_ids, self.env_ids)
+        validation_curve = []
+        difference_old = -100
 
         if is_meta_training:
             for iteration in range(self.outer_iterations):
                 self.period = obtain_period()
+                if iteration % 5 == 0 and iteration != 0:
+                    vali_avg_rewards_meta = []
+                    vali_avg_rewards_metaless = []
+                    print(f"Validation on iteration {iteration}")
+                                        
+                    for env in self.test_ids:
+                        model, r_per_ep = self.run_inner(env, self.weather_default, True, is_meta_training=True)
+                        vali_avg_rewards_meta.append(np.mean(r_per_ep))
+                    for env in self.test_ids:
+                        model, r_per_ep = self.run_inner(env, self.weather_default, True, is_meta_training=True, validate = True)
+                        vali_avg_rewards_metaless.append(np.mean(r_per_ep))
+                    difference = np.mean(vali_avg_rewards_meta) - np.mean(vali_avg_rewards_metaless)
+                    print(f"Difference between averages: {difference}")
+                    validation_curve.append(difference)
+                    
+                    if difference > difference_old:
+                        print("New best model found")
+                        torch.save(self.meta_model.state_dict(), self.MODEL_FILE_BEST_BUILDING)
+                    difference_old = difference
+
+                    gs.save_validation_curve(validation_curve, iteration, "building")
+
+
                 for env in self.env_ids:
                     model, r_per_ep = self.run_inner(env, self.weather_default, True, is_meta_training=True)
                     models[env] = model
@@ -244,21 +278,28 @@ class Agent():
                 rewards_list = [float(reward) for reward in rewards.values()]
                 avg_reward = np.mean(list(rewards.values()))
                 print(f"Iteration {iteration}, rewards: {rewards_list}, avg reward: {avg_reward:.3f}, best reward avg: {max_reward_avg:.3f}")
+                '''
                 if avg_reward > max_reward_avg:
                     print(f"New best model found with avg reward: {avg_reward}")
                     max_reward_avg = avg_reward
                     torch.save(self.meta_model.state_dict(), self.MODEL_FILE)
+                '''
                 iterations.append(iteration)
                 iteration_reward.append(np.mean(list(rewards.values())))
                 gs.save_graph(iteration_reward, iterations)
-                torch.save(self.meta_model.state_dict(), self.MODEL_FILE_LATEST)
+                torch.save(self.meta_model.state_dict(), self.MODEL_FILE_LATEST_BUILDING)
         else:
+            self.period = obtain_period(test=True)
             rewards_dict_meta = {env: None for env in self.test_ids}
             rewards_dict_metaless = {env: None for env in self.test_ids}
             rewards_dict_dummy = {env: None for env in self.test_ids}
+            rewards_avg_meta = []
+            rewards_avg_metaless = []
+            rewards_avg_dummy = []
+
             if self.inner_algo == 'DQN':
                 self.meta_model = DQN.DQNnetwork(self.hidden_dim, 15, 5).to(device)
-                self.meta_model.load_state_dict(torch.load(self.MODEL_FILE_LATEST, weights_only=True))
+                self.meta_model.load_state_dict(torch.load(self.MODEL_FILE_LATEST_BUILDING, weights_only=True))
             if self.inner_algo == 'PPO':
                 self.meta_model = PPO.ActorCritic(PPO.Actor(self.hidden_dim, 15, 5).to(device), PPO.Critic(self.hidden_dim, 11).to(device)).to(device)
                 self.meta_actor = self.meta_model.actor
@@ -268,6 +309,8 @@ class Agent():
                 model, r_per_ep_meta = self.run_inner(env, self.weather_default, is_training=True, is_meta_training=False)
                 print(f"Env: {env}, Mean Reward: {np.mean(r_per_ep_meta)}, Max Reward: {np.max(r_per_ep_meta)}")
                 rewards_dict_meta[env] = r_per_ep_meta
+                rewards_avg_meta.append(np.mean(r_per_ep_meta))
+
             del self.meta_model
             del self.meta_actor
             del self.meta_critic
@@ -280,45 +323,72 @@ class Agent():
                 model, r_per_ep_metaless = self.run_inner(env, self.weather_default, is_training=True, is_meta_training=False)
                 print(f"Env: {env}, Mean Reward: {np.mean(r_per_ep_metaless)}, Max Reward: {np.max(r_per_ep_metaless)}")
                 rewards_dict_metaless[env] = r_per_ep_metaless
+                rewards_avg_metaless.append(np.mean(r_per_ep_metaless))
 
             for env in self.test_ids:
                 self.dummy = True
                 model, r_per_ep_dummy = self.run_inner(env, self.weather_default, is_training=True, is_meta_training=False)
                 print(f"Env: {env}, Mean Reward: {np.mean(r_per_ep_dummy)}, Max Reward: {np.max(r_per_ep_dummy)}")
                 rewards_dict_dummy[env] = r_per_ep_dummy
+                rewards_avg_dummy.append(np.mean(r_per_ep_dummy))
 
             gs.save_meta_graph(rewards_dict_meta, rewards_dict_metaless,rewards_dict_dummy)
+
+            overall_avg_meta = np.mean(rewards_avg_meta)
+            overall_avg_metaless = np.mean(rewards_avg_metaless)
+            overall_avg_dummy = np.mean(rewards_avg_dummy)
+
+            print(f"Averages for meta model: {rewards_avg_meta}")
+            print(f"Overall average for meta model: {overall_avg_meta}\n")
+
+            print(f"Averages for metaless model: {rewards_avg_metaless}")
+            print(f"Overall average for metaless model: {overall_avg_metaless}\n")
+
+            print(f"Averages for dummy model: {rewards_avg_dummy}")
+            print(f"Overall average for dummy model: {overall_avg_dummy}\n")
+
 
     def run_weather(self, is_meta_training=True):
         iterations = []
         iteration_reward = []
         max_reward_avg = -1e9
-        rewards = {weather: None for weather in self.weather_train}
-        max_rs = {weather: None for weather in self.weather_train}
+        rewards = {weather: 0 for weather in self.weather_train}
+        max_rs = {weather: 0 for weather in self.weather_train}
         gs = GraphSaver(self.PLOT_FILE, self.META_PLOT_FILE, self.weather_test, self.weather_train)
         validation_curve = []
         env = self.env_ids[0]
+        difference_old = -100
 
         if is_meta_training:
             for iteration in range(self.outer_iterations):
                 self.period = obtain_period()
-                if iteration % 10 == 0:
+                if iteration % 5 == 0 and iteration != 0:
                     vali_avg_rewards_meta = []
                     vali_avg_rewards_metaless = []
                     print(f"Validation on iteration {iteration}")
-                    for weather in self.weather_validate:
+                    
+                    sample_weather_validate = random.sample(self.weather_validate, self.validate_samples)
+                    
+                    for weather in sample_weather_validate:
                         model, r_per_ep = self.run_inner(env, weather, True, is_meta_training=True)
                         vali_avg_rewards_meta.append(np.mean(r_per_ep))
-                    for weather in self.weather_validate:
+                    for weather in sample_weather_validate:
                         model, r_per_ep = self.run_inner(env, weather, True, is_meta_training=True, validate = True)
                         vali_avg_rewards_metaless.append(np.mean(r_per_ep))
                     difference = np.mean(vali_avg_rewards_meta) - np.mean(vali_avg_rewards_metaless)
                     print(f"Difference between averages: {difference}")
                     validation_curve.append(difference)
-                    gs.save_validation_curve(validation_curve, iteration)
+
+                    if difference > difference_old:
+                        print("New best model found")
+                        torch.save(self.meta_model.state_dict(), self.MODEL_FILE_BEST_WEATHER)
+
+                    difference_old = difference
+                    gs.save_validation_curve(validation_curve, iteration, "weather")
 
 
-                for weather in self.weather_train:
+                sample_weather_train = random.sample(self.weather_train, self.train_samples)
+                for weather in sample_weather_train:
                     model, r_per_ep = self.run_inner(env, weather, True, is_meta_training=True)
                     rewards[weather] = self.relative_improvement(r_per_ep)
                     max_rs[weather] = np.max(r_per_ep)
@@ -328,24 +398,33 @@ class Agent():
                     elif self.meta_algorithm == 'maml':
                         self.update_outer_maml(self.meta_model, model)
 
-                rewards_list = [float(reward) for reward in rewards.values()]
-                avg_reward = np.mean(list(rewards.values()))
-                print(f"Iteration {iteration}, rewards: {rewards_list}, avg reward: {avg_reward:.3f}, best reward avg: {max_reward_avg:.3f}")
+                #rewards_list = [float(reward) for reward in rewards.values()]
+                #avg_reward = np.mean(list(rewards.values()))
+                #print(f"Iteration {iteration}, rewards: {rewards_list}, avg reward: {avg_reward:.3f}, best reward avg: {max_reward_avg:.3f}")
+                
+                '''
                 if avg_reward > max_reward_avg:
                     print(f"New best model found with avg reward: {avg_reward}")
                     max_reward_avg = avg_reward
                     torch.save(self.meta_model.state_dict(), self.MODEL_FILE)
-                iterations.append(iteration)
-                iteration_reward.append(np.mean(list(rewards.values())))
-                gs.save_graph(iteration_reward, iterations)
-                torch.save(self.meta_model.state_dict(), self.MODEL_FILE_LATEST)
+                '''
+
+                #iterations.append(iteration)
+                #iteration_reward.append(np.mean(list(rewards.values())))
+                #gs.save_graph(iteration_reward, iterations)
+                torch.save(self.meta_model.state_dict(), self.MODEL_FILE_LATEST_WEATHER)
         else:
+            self.period = obtain_period(test=True)
             rewards_dict_meta = {weather: None for weather in self.weather_test}
             rewards_dict_metaless = {weather: None for weather in self.weather_test}
             rewards_dict_dummy = {weather: None for weather in self.weather_test}
+            rewards_avg_meta = []
+            rewards_avg_metaless = []
+            rewards_avg_dummy = []
+
             if self.inner_algo == 'DQN':
                 self.meta_model = DQN.DQNnetwork(self.hidden_dim, 15, 5).to(device)
-                self.meta_model.load_state_dict(torch.load(self.MODEL_FILE_LATEST, weights_only=True))
+                self.meta_model.load_state_dict(torch.load(self.MODEL_FILE_LATEST_WEATHER, weights_only=True))
             if self.inner_algo == 'PPO':
                 self.meta_model = PPO.ActorCritic(PPO.Actor(self.hidden_dim, 15, 5).to(device), PPO.Critic(self.hidden_dim, 11).to(device)).to(device)
                 self.meta_actor = self.meta_model.actor
@@ -355,6 +434,7 @@ class Agent():
                 model, r_per_ep_meta = self.run_inner(env, weather, is_training=True, is_meta_training=False)
                 print(f"weather: {weather}, Mean Reward: {np.mean(r_per_ep_meta)}, Max Reward: {np.max(r_per_ep_meta)}")
                 rewards_dict_meta[weather] = r_per_ep_meta
+                rewards_avg_meta.append(np.mean(r_per_ep_meta))
             del self.meta_model
             del self.meta_actor
             del self.meta_critic
@@ -367,16 +447,30 @@ class Agent():
                 model, r_per_ep_metaless = self.run_inner(env, weather, is_training=True, is_meta_training=False)
                 print(f"weather: {weather}, Mean Reward: {np.mean(r_per_ep_metaless)}, Max Reward: {np.max(r_per_ep_metaless)}")
                 rewards_dict_metaless[weather] = r_per_ep_metaless
+                rewards_avg_metaless.append(np.mean(r_per_ep_metaless))
 
             for weather in self.weather_test:
                 self.dummy = True
                 model, r_per_ep_dummy = self.run_inner(env, weather, is_training=True, is_meta_training=False)
-                print(f"Env: {env}, Mean Reward: {np.mean(r_per_ep_dummy)}, Max Reward: {np.max(r_per_ep_dummy)}")
-                rewards_dict_dummy[env] = r_per_ep_dummy
+                print(f"Env: {weather}, Mean Reward: {np.mean(r_per_ep_dummy)}, Max Reward: {np.max(r_per_ep_dummy)}")
+                rewards_dict_dummy[weather] = r_per_ep_dummy
+                rewards_avg_dummy.append(np.mean(r_per_ep_dummy))
 
             gs.save_meta_graph(rewards_dict_meta, rewards_dict_metaless,rewards_dict_dummy)
+            
+            overall_avg_meta = np.mean(rewards_avg_meta)
+            overall_avg_metaless = np.mean(rewards_avg_metaless)
+            overall_avg_dummy = np.mean(rewards_avg_dummy)
 
+            print(f"Averages for meta model: {rewards_avg_meta}")
+            print(f"Overall average for meta model: {overall_avg_meta}\n")
 
+            print(f"Averages for metaless model: {rewards_avg_metaless}")
+            print(f"Overall average for metaless model: {overall_avg_metaless}\n")
+
+            print(f"Averages for dummy model: {rewards_avg_dummy}")
+            print(f"Overall average for dummy model: {overall_avg_dummy}\n")
+            
     def relative_improvement(self, rewards):
         initial_reward = rewards[0]
         final_reward = rewards[-1]
@@ -405,6 +499,8 @@ if __name__ == "__main__":
             rep.run(is_meta_training=True)
     else:
         if args.mode == "weather":
+            rep.test_envs = rep.envs
+            rep.test_ids = rep.test_id_weather
             rep.run_weather(is_meta_training=False)
         elif args.mode == "building":
             rep.run(is_meta_training=False)

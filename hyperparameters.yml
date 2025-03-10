@@ -190,7 +190,7 @@ reptile:
   learning_rate_a: 0.001
   lr_outer: 0.0005
   inner_iterations: 2
-  outer_iterations: 1000
+  outer_iterations: 500
   discount_factor_g: 0.99
   hidden_dim: 128
   enable_double_dqn: False
